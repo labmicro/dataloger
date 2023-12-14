@@ -1,0 +1,18 @@
+mqtt:
+  server: test.mosquitto.org
+  port: 1883
+  id: laboratorio
+  tls: false
+  username:
+  password:
+
+anayzers:
+  - name: DioxidoNitroso
+    class: EcoPhysicsNOx
+    port: /dev/tty.USB1
+    address: 1
+    topic: lea/nox
+  - name: Ozono
+    class: FrancesO3
+    port: /dev/tty.USB2
+    topic: lea/ozono

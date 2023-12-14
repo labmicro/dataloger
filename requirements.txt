@@ -1,0 +1,5 @@
+pyserial==3.5
+pytest==7.4.2
+pytest-mock==3.11.1
+PyYAML==6.0.1
+paho-mqtt==1.6.1

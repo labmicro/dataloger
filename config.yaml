@@ -1,0 +1,18 @@
+mqtt:
+  server: test.mosquitto.org
+  port: 8883
+  id: laboratorio
+  tls: false
+  username:
+  password:
+
+anayzers:
+  - name: DioxidoNitroso
+    class: EcoPhysicsNOx
+    port: /dev/tty.usbserial-1410
+    address: 10
+    topic: lea/nox
+  # - name: Ozono
+  #   class: AF22M
+  #   port: /dev/tty.usbserial-1420
+  #   topic: lea/ozono
