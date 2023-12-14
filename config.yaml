@@ -6,13 +6,21 @@ mqtt:
   username:
   password:
 
+storage:
+  filename: ./data.log
+  filter: 30
+
 anayzers:
   - name: DioxidoNitroso
     class: EcoPhysicsNOx
-    port: /dev/tty.usbserial-1410
+    port: /dev/ttyUSB0
     address: 10
     topic: lea/nox
-  # - name: Ozono
-  #   class: AF22M
-  #   port: /dev/tty.usbserial-1420
-  #   topic: lea/ozono
+  - name: DioxidoAzufre
+    class: AF22M
+    port: /dev/ttyS1
+    topic: lea/azufre
+  - name: Ozono
+    class: O341M
+    port: /dev/ttyS2
+    topic: lea/ozono

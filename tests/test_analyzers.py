@@ -30,7 +30,7 @@
 import pytest
 import serial
 
-from analyzers import Analyzer, FrancesO3, EcoPhysicsNOx
+from analyzers import Analyzer, AF22M, EcoPhysicsNOx
 from pytest_mock import MockerFixture
 from unittest.mock import MagicMock
 
@@ -63,7 +63,7 @@ def test_analizar_O3(mocker: MockerFixture):
         "EXT1": "1.5 mv",
         "EXT2": "0.0 mv",
     }
-    analyzer = FrancesO3("O3", port="/dev/tty.USB", publisher=None, topic="")
+    analyzer = AF22M("O3", port="/dev/tty.USB", publisher=None, topic="")
     mocker.init_serial.assert_called_once_with(port="/dev/tty.USB", baudrate=9600)
 
     resultado = analyzer.poll()

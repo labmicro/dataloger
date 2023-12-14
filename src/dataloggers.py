@@ -61,7 +61,10 @@ class Datalogger:
             try:
                 clase = analyzer.pop("class")
                 analyzer["publisher"] = self.publisher
-                self._analyzers.append(eval(clase)(**analyzer))
+                analizador = eval(clase)(**analyzer)
+                analizador.datafile = self.config("storage.filename", None)
+                analizador.filter_data = self.config("storage.filter", 0)
+                self._analyzers.append(analizador)
             except:
                 registro.error(
                     f"No se pudo crear el analizador {analyzer['name']} del tipo {clase}"

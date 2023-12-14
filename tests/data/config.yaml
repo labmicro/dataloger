@@ -6,6 +6,10 @@ mqtt:
   username:
   password:
 
+storage:
+  filename: ./data.log
+  filter: 30
+
 anayzers:
   - name: DioxidoNitroso
     class: EcoPhysicsNOx
@@ -13,6 +17,6 @@ anayzers:
     address: 1
     topic: lea/nox
   - name: Ozono
-    class: FrancesO3
+    class: AF22M
     port: /dev/tty.USB2
     topic: lea/ozono

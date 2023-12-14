@@ -29,6 +29,7 @@
 
 import serial
 import logging
+from datetime import datetime
 
 STX = b"\x02"
 ETX = b"\x03"
@@ -49,6 +50,9 @@ class Analyzer:
         )
         self._publisher = publisher
         self._topic = topic
+        self._last_data = datetime.now()
+        self.filter_data = 0
+        self.datafile = None
 
     @property
     def name(self) -> str:
@@ -63,6 +67,19 @@ class Analyzer:
         values = self._get_values()
 
         if values:
+            if (datetime.now() - self._last_data).total_seconds() > self.filter_data:
+                self._last_data = datetime.now()
+                if self.datafile:
+                    data = (
+                        datetime.strftime(datetime.now(), "%Y-%m-%d %H:%M:%S"),
+                        self.name,
+                        values,
+                    )
+                    with open(self.datafile, "a+") as archivo:
+                        archivo.write(f"{data}\r\n")
+                        archivo.close()
+                    print(f"{self._last_data} => {data}")
+
             registro.info(
                 f"Se obtuvieron los siguiente valores del analizador {self.name} {values}"
             )
