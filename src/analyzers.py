@@ -27,6 +27,8 @@
 # SPDX-FileCopyrightText: 2023, Esteban Volentini <evolentini@herrera.unt.edu.ar>
 ##################################################################################################
 
+import os
+import shutil
 import serial
 import logging
 from datetime import datetime
@@ -40,19 +42,22 @@ registro = logging.getLogger(__name__)
 
 
 class Analyzer:
+    COLUMNS = None
+
     def __init__(self, name: str, port: str, publisher: callable, topic: str) -> None:
         self._name = name
         self._puerto = serial.Serial(
             port=port,
             baudrate=9600,
-            timeout=0.5,
-            write_timeout=0.5,
+            timeout=1,
+            write_timeout=1,
         )
         self._publisher = publisher
         self._topic = topic
-        self._last_data = datetime.now()
+        self.dir = ""
+        self._last_data = None
         self.filter_data = 0
-        self.datafile = None
+        self.respuesta = ""
 
     @property
     def name(self) -> str:
@@ -62,27 +67,71 @@ class Analyzer:
     def topic(self) -> str:
         return self._topic
 
+    def _get_header(self):
+        result = '"Fecha","Hora"'
+        for column in self.COLUMNS:
+            result = result + f',"{column}"'
+        return result
+
+    def _serialize_values(self, values) -> str:
+        result = datetime.strftime(datetime.now(), '"%Y-%m-%d","%H:%M:%S"')
+        for column in self.COLUMNS:
+            result = result + f',"{values[column]}"'
+        return result
+
+    def logfile(self):
+        filename = f"{self.name}.csv"
+        new = not os.path.isfile(f"{self.name}.csv")
+        if not new and self._last_data:
+            published = (
+                f"{self.name}-{self._last_data.year}-{self._last_data.month}.csv"
+            )
+            if not os.path.exists(self.dir):
+                os.mkdir(self.dir)
+            if self._last_data.month != datetime.now().month:
+                registro.debug(f"Rotando el archivo de log por cambio de mes")
+                os.rename(filename, f"{self.dir}/{published}")
+                new = True
+            elif self._last_data.day != datetime.now().day:
+                registro.debug(f"Publicando el archivo de log por cambio de dia")
+                shutil.copy(filename, f"{self.dir}/{published}")
+
+        file = open(filename, "a+")
+        if new:
+            file.write(f"{self._get_header()}\r\n")
+        return file
+
+    def log(self, values: dict):
+        registro.debug(f"Ultimo dato {self._last_data} y fecha actual {datetime.now()}")
+        if self._last_data:
+            seconds = (datetime.now() - self._last_data).total_seconds()
+        else:
+            seconds = self.filter_data
+        registro.debug(f"Delta {seconds} y filter {self.filter_data}")
+
+        if seconds >= self.filter_data:
+            if self.dir:
+                with self.logfile() as archivo:
+                    archivo.write(f"{self._serialize_values(values)}\r\n")
+                    archivo.close()
+                # print(f"{self._last_data} => {data}")
+                registro.debug(f"Escribiendo valores en el archivo de log")
+            else:
+                registro.debug(f"No hay un archivo de log asignado")
+            self._last_data = datetime.now()
+        else:
+            registro.info(f"Los datos no se almacenan por las reglas de filtrado")
+
     def poll(self) -> dict:
         registro.debug(f"Obteniendo valores del analizador {self.name}")
         values = self._get_values()
 
         if values:
-            if (datetime.now() - self._last_data).total_seconds() > self.filter_data:
-                self._last_data = datetime.now()
-                if self.datafile:
-                    data = (
-                        datetime.strftime(datetime.now(), "%Y-%m-%d %H:%M:%S"),
-                        self.name,
-                        values,
-                    )
-                    with open(self.datafile, "a+") as archivo:
-                        archivo.write(f"{data}\r\n")
-                        archivo.close()
-                    print(f"{self._last_data} => {data}")
-
             registro.info(
                 f"Se obtuvieron los siguiente valores del analizador {self.name} {values}"
             )
+            self.log(values)
+
             if self._publisher:
                 registro.info(f"Publicando valores del analizador {self.name}")
                 self._publisher(topic=self.topic, values=values)
@@ -94,41 +143,66 @@ class Analyzer:
 
 class O341M(Analyzer):
     def _get_values(self) -> dict:
-        resultado = {}
+        registro.debug(f"Leyendo el puerto serial del analizador {self.name}")
+        respuesta = ""
         try:
-            respuesta = self._puerto.read_until()
-            valores = respuesta.decode().split()
-            registro.error(f"Se recibieron los siguientes datos: {valores}")
+            # respuesta = self._puerto.readline().decode(errors="ignore")
+            respuesta = self._puerto.read_until().decode(errors="ignore")
+        except serial.SerialTimeoutException:
+            pass
+        except Exception as error:
+            registro.error(
+                f"No se pudo leer desde el puerto {self._puerto.port}, error {str(error)}"
+            )
 
-            if len(valores) > 11:
-                resultado = {
-                    valores[3]: f"{valores[4]} {valores[5]}",
-                    valores[6]: f"{valores[7]} {valores[8]}",
-                    valores[9]: f"{valores[10]} {valores[11]}",
-                }
-        except:
-            registro.error(f"No se pudo leer desde el puerto {self._puerto.port}")
+        resultado = {}
+        valores = respuesta.replace("\0", " ").split()
+
+        if len(valores) > 11:
+            resultado = {
+                valores[3]: f"{valores[4]} {valores[5]}",
+                valores[6]: f"{valores[7]} {valores[8]}",
+                valores[9]: f"{valores[10]} {valores[11]}",
+            }
+            registro.info(f"Se recibieron los siguientes datos: {valores}")
+
         return resultado
 
 
 class AF22M(Analyzer):
-    def _get_values(self) -> dict:
-        resultado = {}
-        try:
-            respuesta = self._puerto.read_until()
-            valores = respuesta.decode().replace("\0", " ").split()
-            registro.error(f"Se recibieron los siguientes datos: {valores}")
+    COLUMNS = ("O3", "EXT1", "EXT2")
 
-            if len(valores) > 5:
-                resultado = {
-                    valores[3]: f"{valores[4]} {valores[5]}",
-                }
-        except:
-            registro.error(f"No se pudo leer desde el puerto {self._puerto.port}")
+    def _get_values(self) -> dict:
+        registro.debug(f"Leyendo el puerto serial del analizador {self.name}")
+        respuesta = ""
+        try:
+            # respuesta = self._puerto.readline().decode(errors="ignore")
+            respuesta = self._puerto.read_until().decode(errors="ignore")
+        except serial.SerialTimeoutException:
+            pass
+        except Exception as error:
+            registro.error(
+                f"No se pudo leer desde el puerto {self._puerto.port}, error {str(error)}"
+            )
+
+        resultado = {}
+        registro.debug(f"Se recbio la cadena: {respuesta}")
+
+        valores = respuesta.replace("\0", " ").split()
+        if len(valores) > 5:
+            resultado = {
+                valores[3]: f"{valores[4]} {valores[5]}",
+                valores[6]: f"{valores[7]} {valores[8]}",
+                valores[9]: f"{valores[10]} {valores[11]}",
+            }
+            registro.info(f"Se recibieron los siguientes datos: {valores}")
+
         return resultado
 
 
 class EcoPhysicsNOx(Analyzer):
+    COLUMNS = ("NO2", "NO", "NOx")
+
     def __init__(
         self, name: str, address: int, port: str, publisher: callable, topic: str
     ) -> None:
@@ -151,8 +225,8 @@ class EcoPhysicsNOx(Analyzer):
                 "NO": valores[1],
                 "NOx": valores[2],
             }
-        except:
-            registro.error(f"No se pudo leer los datos del analizador")
+        except Exception as error:
+            registro.error(f"No se pudo leer los datos del analizador, {str(error)}")
 
         return resultado
 

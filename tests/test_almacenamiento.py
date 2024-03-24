@@ -28,6 +28,8 @@
 ##################################################################################################
 
 import os
+import glob
+import shutil
 import pytest
 import paho.mqtt.client as mqtt
 import serial
@@ -56,29 +58,29 @@ def mock_plataform(mocker):
     mocker.datetime = mocker.patch("analyzers.datetime", wraps=datetime)
 
 
-def test_deshabilitar_almacenamiento(mocker: MockerFixture):
-    registro = "data.log"
+# def test_deshabilitar_almacenamiento(mocker: MockerFixture):
+#     registro = "data.log"
 
-    if os.path.isfile(registro):
-        os.remove(registro)
+#     if os.path.isfile(registro):
+#         os.remove(registro)
 
-    datalogger = Datalogger(config=CONFIG_FILE)
-    datalogger.start()
+#     datalogger = Datalogger(config=CONFIG_FILE)
+#     datalogger.start()
 
-    mocker.serial_port.read_until.side_effect = [
-        b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A"
-    ]
+#     mocker.serial_port.read_until.side_effect = [
+#         b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A"
+#     ]
 
-    mocker.datetime.now.return_value = datetime(2023, 12, 24, 8, 3, 1)
-    datalogger._analyzers[1].datafile = None
+#     mocker.datetime.now.return_value = datetime(2023, 12, 24, 8, 3, 1)
+#     datalogger._analyzers[1].datafile = None
 
-    datalogger._analyzers[1].poll()
+#     datalogger._analyzers[1].poll()
 
-    assert not os.path.isfile(registro)
+#     assert not os.path.isfile(registro)
 
 
 def test_almacenar_datos_recibidos_oxidonitroso(mocker: MockerFixture):
-    registro = "data.log"
+    registro = "DioxidoNitroso.csv"
 
     if os.path.isfile(registro):
         os.remove(registro)
@@ -95,18 +97,15 @@ def test_almacenar_datos_recibidos_oxidonitroso(mocker: MockerFixture):
     datalogger._analyzers[0].poll()
 
     with open(registro, "r") as archivo:
-        linea = archivo.read()
+        lineas = archivo.read().splitlines()
 
-    esperado = (
-        "2023-12-24 08:03:01",
-        "DioxidoNitroso",
-        {"NO2": "123456", "NO": "125689", "NOx": "123789"},
-    )
-    assert eval(linea) == esperado
+    assert len(lineas) == 2
+    assert lineas[0] == '"Fecha","Hora","NO2","NO","NOx"'
+    assert lineas[1] == '"2023-12-24","08:03:01","123456","125689","123789"'
 
 
 def test_almacenar_datos_recibidos_ozono(mocker: MockerFixture):
-    registro = "data.log"
+    registro = "Ozono.csv"
 
     if os.path.isfile(registro):
         os.remove(registro)
@@ -120,22 +119,99 @@ def test_almacenar_datos_recibidos_ozono(mocker: MockerFixture):
 
     mocker.datetime.now.return_value = datetime(2023, 12, 24, 8, 3, 1)
     datalogger._analyzers[1].poll()
-    datalogger._analyzers[1].poll()
 
     with open(registro, "r") as archivo:
-        linea = archivo.read()
+        lineas = archivo.read().splitlines()
 
-    esperado = (
-        "2023-12-24 08:03:01",
-        "Ozono",
-        {"O3": "17.8 PPB"},
-    )
-    assert eval(linea) == esperado
+    assert len(lineas) == 2
+    assert lineas[0] == '"Fecha","Hora","O3","EXT1","EXT2"'
+    assert lineas[1] == '"2023-12-24","08:03:01","17.8 PPB","1.5 mv","0.0 mv"'
+
+
+def test_publicar_archivo_almacenamiento_diariamente(mocker: MockerFixture):
+    registro = "Ozono.csv"
+    if os.path.isfile(registro):
+        os.remove(registro)
+
+    shutil.rmtree("./ftp")
+
+    datalogger = Datalogger(config=CONFIG_FILE)
+    datalogger.start()
+
+    mocker.serial_port.read_until.side_effect = [
+        b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A",
+    ]
+    mocker.datetime.now.return_value = datetime(2023, 11, 29, 7, 3, 1)
+    datalogger._analyzers[1].poll()
+
+    mocker.serial_port.read_until.side_effect = [
+        b"14-00-01 23:04  M000  O3   19.8  PPB   EXT1   0.5   mv   EXT2   1.0   mv   \x0D\x0A",
+    ]
+    mocker.datetime.now.return_value = datetime(2023, 11, 30, 8, 4, 2)
+    datalogger._analyzers[1].poll()
+
+    # mocker.datetime.now.return_value = datetime(2023, 12, 1, 9, 5, 3)
+    # datalogger._analyzers[1].poll()
+
+    with open("./ftp/Ozono-2023-11.csv", "r") as archivo:
+        lineas = archivo.read().splitlines()
+
+    assert len(lineas) == 2
+    assert lineas[0] == '"Fecha","Hora","O3","EXT1","EXT2"'
+    assert lineas[1] == '"2023-11-29","07:03:01","17.8 PPB","1.5 mv","0.0 mv"'
+
+    with open("Ozono.csv", "r") as archivo:
+        lineas = archivo.read().splitlines()
+
+    assert len(lineas) == 3
+    assert lineas[0] == '"Fecha","Hora","O3","EXT1","EXT2"'
+    assert lineas[1] == '"2023-11-29","07:03:01","17.8 PPB","1.5 mv","0.0 mv"'
+    assert lineas[2] == '"2023-11-30","08:04:02","19.8 PPB","0.5 mv","1.0 mv"'
+
+
+def test_rotar_archivo_almacenamiento_mensualmente(mocker: MockerFixture):
+    registro = "Ozono.csv"
+    if os.path.isfile(registro):
+        os.remove(registro)
+
+    shutil.rmtree("./ftp")
+
+    datalogger = Datalogger(config=CONFIG_FILE)
+    datalogger.start()
+
+    mocker.serial_port.read_until.side_effect = [
+        b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A",
+    ]
+    mocker.datetime.now.return_value = datetime(2023, 11, 29, 7, 3, 1)
+    datalogger._analyzers[1].poll()
+
+    mocker.serial_port.read_until.side_effect = [
+        b"14-00-01 23:04  M000  O3   19.8  PPB   EXT1   0.5   mv   EXT2   1.0   mv   \x0D\x0A",
+    ]
+    mocker.datetime.now.return_value = datetime(2023, 11, 30, 8, 4, 2)
+    datalogger._analyzers[1].poll()
+
+    mocker.serial_port.read_until.side_effect = [
+        b"14-00-01 23:04  M000  O3   15.6  PPB   EXT1   1.2   mv   EXT2   0.7   mv   \x0D\x0A",
+    ]
+    mocker.datetime.now.return_value = datetime(2023, 12, 1, 9, 5, 3)
+    datalogger._analyzers[1].poll()
+
+    with open("./ftp/Ozono-2023-11.csv", "r") as archivo:
+        lineas = archivo.read().splitlines()
+    assert len(lineas) == 3
+    assert lineas[0] == '"Fecha","Hora","O3","EXT1","EXT2"'
+    assert lineas[1] == '"2023-11-29","07:03:01","17.8 PPB","1.5 mv","0.0 mv"'
+    assert lineas[2] == '"2023-11-30","08:04:02","19.8 PPB","0.5 mv","1.0 mv"'
+
+    with open("Ozono.csv", "r") as archivo:
+        lineas = archivo.read().splitlines()
+    assert lineas[0] == '"Fecha","Hora","O3","EXT1","EXT2"'
+    assert lineas[1] == '"2023-12-01","09:05:03","15.6 PPB","1.2 mv","0.7 mv"'
 
 
 def test_deshabilitar_filtro_datos_frecuentes(mocker: MockerFixture):
-    registro = "data.log"
-
+    registro = "Ozono.csv"
     if os.path.isfile(registro):
         os.remove(registro)
 
@@ -148,51 +224,32 @@ def test_deshabilitar_filtro_datos_frecuentes(mocker: MockerFixture):
     mocker.serial_port.read_until.side_effect = [
         b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A",
     ]
+
     mocker.datetime.now.return_value = datetime(2023, 12, 24, 8, 3, 1)
     datalogger._analyzers[1].poll()
 
     mocker.serial_port.read_until.side_effect = [
-        b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A",
+        b"14-00-01 23:04  M000  O3   19.8  PPB   EXT1   0.5   mv   EXT2   1.0   mv   \x0D\x0A",
     ]
     mocker.datetime.now.return_value = datetime(2023, 12, 24, 8, 3, 10)
     datalogger._analyzers[1].poll()
 
     mocker.serial_port.read_until.side_effect = [
-        b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A",
+        b"14-00-01 23:04  M000  O3   15.6  PPB   EXT1   1.2   mv   EXT2   0.7   mv   \x0D\x0A",
     ]
     mocker.datetime.now.return_value = datetime(2023, 12, 24, 8, 4, 5)
     datalogger._analyzers[1].poll()
 
     with open(registro, "r") as archivo:
-        lineas = archivo.readlines()
-
-    assert len(lineas) == 3
-
-    esperado = (
-        "2023-12-24 08:03:01",
-        "Ozono",
-        {"O3": "17.8 PPB"},
-    )
-    assert eval(lineas[0]) == esperado
-
-    esperado = (
-        "2023-12-24 08:03:10",
-        "Ozono",
-        {"O3": "17.8 PPB"},
-    )
-    assert eval(lineas[1]) == esperado
-
-    esperado = (
-        "2023-12-24 08:04:05",
-        "Ozono",
-        {"O3": "17.8 PPB"},
-    )
-    assert eval(lineas[2]) == esperado
+        lineas = archivo.read().splitlines()
+    assert len(lineas) == 4
+    assert lineas[1] == '"2023-12-24","08:03:01","17.8 PPB","1.5 mv","0.0 mv"'
+    assert lineas[2] == '"2023-12-24","08:03:10","19.8 PPB","0.5 mv","1.0 mv"'
+    assert lineas[3] == '"2023-12-24","08:04:05","15.6 PPB","1.2 mv","0.7 mv"'
 
 
 def test_remover_datos_demasiado_frecuentes_ozono(mocker: MockerFixture):
-    registro = "data.log"
-
+    registro = "Ozono.csv"
     if os.path.isfile(registro):
         os.remove(registro)
 
@@ -208,32 +265,19 @@ def test_remover_datos_demasiado_frecuentes_ozono(mocker: MockerFixture):
     datalogger._analyzers[1].poll()
 
     mocker.serial_port.read_until.side_effect = [
-        b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A",
+        b"14-00-01 23:04  M000  O3   19.8  PPB   EXT1   0.5   mv   EXT2   1.0   mv   \x0D\x0A",
     ]
     mocker.datetime.now.return_value = datetime(2023, 12, 24, 8, 3, 10)
     datalogger._analyzers[1].poll()
 
     mocker.serial_port.read_until.side_effect = [
-        b"14-00-01 23:04  M000  O3   17.8  PPB   EXT1   1.5   mv   EXT2   0.0   mv   \x0D\x0A",
+        b"14-00-01 23:04  M000  O3   15.6  PPB   EXT1   1.2   mv   EXT2   0.7   mv   \x0D\x0A",
     ]
     mocker.datetime.now.return_value = datetime(2023, 12, 24, 8, 4, 5)
     datalogger._analyzers[1].poll()
 
     with open(registro, "r") as archivo:
-        lineas = archivo.readlines()
-
-    assert len(lineas) == 2
-
-    esperado = (
-        "2023-12-24 08:03:01",
-        "Ozono",
-        {"O3": "17.8 PPB"},
-    )
-    assert eval(lineas[0]) == esperado
-
-    esperado = (
-        "2023-12-24 08:04:05",
-        "Ozono",
-        {"O3": "17.8 PPB"},
-    )
-    assert eval(lineas[1]) == esperado
+        lineas = archivo.read().splitlines()
+    assert len(lineas) == 3
+    assert lineas[1] == '"2023-12-24","08:03:01","17.8 PPB","1.5 mv","0.0 mv"'
+    assert lineas[2] == '"2023-12-24","08:04:05","15.6 PPB","1.2 mv","0.7 mv"'

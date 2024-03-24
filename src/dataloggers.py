@@ -62,7 +62,10 @@ class Datalogger:
                 clase = analyzer.pop("class")
                 analyzer["publisher"] = self.publisher
                 analizador = eval(clase)(**analyzer)
-                analizador.datafile = self.config("storage.filename", None)
+                analizador.dir = self.config("storage.dir", None)
+                registro.debug(
+                    f"Asignando {analizador.dir} para publicar los archivos de log"
+                )
                 analizador.filter_data = self.config("storage.filter", 0)
                 self._analyzers.append(analizador)
             except:
