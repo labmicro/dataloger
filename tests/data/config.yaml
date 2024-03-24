@@ -17,6 +17,10 @@ anayzers:
     address: 1
     topic: lea/nox
   - name: Ozono
-    class: AF22M
+    class: O341M
     port: /dev/tty.USB2
     topic: lea/ozono
+  # - name: DioxidoAzufre
+  #   class: AF22M
+  #   port: /dev/tty.USB3
+  #   topic: lea/azufre

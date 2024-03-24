@@ -133,7 +133,8 @@ def test_publicar_archivo_almacenamiento_diariamente(mocker: MockerFixture):
     if os.path.isfile(registro):
         os.remove(registro)
 
-    shutil.rmtree("./ftp")
+    if os.path.exists("./ftp"):
+        shutil.rmtree("./ftp")
 
     datalogger = Datalogger(config=CONFIG_FILE)
     datalogger.start()
@@ -174,7 +175,8 @@ def test_rotar_archivo_almacenamiento_mensualmente(mocker: MockerFixture):
     if os.path.isfile(registro):
         os.remove(registro)
 
-    shutil.rmtree("./ftp")
+    if os.path.exists("./ftp"):
+        shutil.rmtree("./ftp")
 
     datalogger = Datalogger(config=CONFIG_FILE)
     datalogger.start()

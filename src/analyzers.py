@@ -142,34 +142,6 @@ class Analyzer:
 
 
 class O341M(Analyzer):
-    def _get_values(self) -> dict:
-        registro.debug(f"Leyendo el puerto serial del analizador {self.name}")
-        respuesta = ""
-        try:
-            # respuesta = self._puerto.readline().decode(errors="ignore")
-            respuesta = self._puerto.read_until().decode(errors="ignore")
-        except serial.SerialTimeoutException:
-            pass
-        except Exception as error:
-            registro.error(
-                f"No se pudo leer desde el puerto {self._puerto.port}, error {str(error)}"
-            )
-
-        resultado = {}
-        valores = respuesta.replace("\0", " ").split()
-
-        if len(valores) > 11:
-            resultado = {
-                valores[3]: f"{valores[4]} {valores[5]}",
-                valores[6]: f"{valores[7]} {valores[8]}",
-                valores[9]: f"{valores[10]} {valores[11]}",
-            }
-            registro.info(f"Se recibieron los siguientes datos: {valores}")
-
-        return resultado
-
-
-class AF22M(Analyzer):
     COLUMNS = ("O3", "EXT1", "EXT2")
 
     def _get_values(self) -> dict:
@@ -186,14 +158,39 @@ class AF22M(Analyzer):
             )
 
         resultado = {}
-        registro.debug(f"Se recbio la cadena: {respuesta}")
-
         valores = respuesta.replace("\0", " ").split()
-        if len(valores) > 5:
+        if len(valores) > 11:
             resultado = {
                 valores[3]: f"{valores[4]} {valores[5]}",
                 valores[6]: f"{valores[7]} {valores[8]}",
                 valores[9]: f"{valores[10]} {valores[11]}",
+            }
+            registro.info(f"Se recibieron los siguientes datos: {valores}")
+
+        return resultado
+
+
+class AF22M(Analyzer):
+    COLUMNS = ("SO2",)
+
+    def _get_values(self) -> dict:
+        registro.debug(f"Leyendo el puerto serial del analizador {self.name}")
+        respuesta = ""
+        try:
+            # respuesta = self._puerto.readline().decode(errors="ignore")
+            respuesta = self._puerto.read_until().decode(errors="ignore")
+        except serial.SerialTimeoutException:
+            pass
+        except Exception as error:
+            registro.error(
+                f"No se pudo leer desde el puerto {self._puerto.port}, error {str(error)}"
+            )
+
+        resultado = {}
+        valores = respuesta.replace("\0", " ").split()
+        if len(valores) > 5:
+            resultado = {
+                valores[3]: f"{valores[4]} {valores[5]}",
             }
             registro.info(f"Se recibieron los siguientes datos: {valores}")
 
