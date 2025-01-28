@@ -97,6 +97,13 @@ if __name__ == "__main__":
         help="Muestra la informacion de depuracion por pantalla durante la ejecucion",
     )
     parser.add_argument(
+        "-s",
+        "--simulation",
+        dest="simulacion",
+        action="store_true",
+        help="Simula la lectura de los sensores para desarrollo sin los euqipos",
+    )
+    parser.add_argument(
         "-v",
         "--version",
         action="version",
@@ -108,9 +115,9 @@ if __name__ == "__main__":
 
     registro = logging.getLogger(__name__)
     registro.debug("Comenzando la ejecución del datalogger")
-    datalogger = Datalogger(config=argumentos.config)
+    datalogger = Datalogger(config=argumentos.config, simulated=argumentos.simulacion)
     datalogger.start()
 
     while True:
         datalogger.poll()
-        time.sleep(1)
+        time.sleep(10)

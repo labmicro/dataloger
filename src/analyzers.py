@@ -44,14 +44,26 @@ registro = logging.getLogger(__name__)
 class Analyzer:
     COLUMNS = None
 
-    def __init__(self, name: str, port: str, publisher: callable, topic: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        port: str,
+        publisher: callable,
+        topic: str,
+        simulated=False,
+    ) -> None:
         self._name = name
-        self._puerto = serial.Serial(
-            port=port,
-            baudrate=9600,
-            timeout=1,
-            write_timeout=1,
-        )
+        self._simulated = simulated
+        try:
+            self._puerto = serial.Serial(
+                port=port,
+                baudrate=9600,
+                timeout=1,
+                write_timeout=1,
+            )
+        except:
+            if self._simulated:
+                self._puerto = None
         self._publisher = publisher
         self._topic = topic
         self.dir = ""
@@ -148,8 +160,10 @@ class O341M(Analyzer):
         registro.debug(f"Leyendo el puerto serial del analizador {self.name}")
         respuesta = ""
         try:
-            # respuesta = self._puerto.readline().decode(errors="ignore")
-            respuesta = self._puerto.read_until().decode(errors="ignore")
+            if self._simulated:
+                respuesta = "14-00-01 23:06  M000  O3   17.7  PPB   EXT1   1.0   mv   EXT2   0.0   mv   \x0D\x0A"
+            else:
+                respuesta = self._puerto.read_until().decode(errors="ignore")
         except serial.SerialTimeoutException:
             pass
         except Exception as error:
@@ -177,8 +191,10 @@ class AF22M(Analyzer):
         registro.debug(f"Leyendo el puerto serial del analizador {self.name}")
         respuesta = ""
         try:
-            # respuesta = self._puerto.readline().decode(errors="ignore")
-            respuesta = self._puerto.read_until().decode(errors="ignore")
+            if self._simulated:
+                respuesta = "07-09-23 16:41  M000 SO2       3.510 PPB  \x0D\x0A"
+            else:
+                respuesta = self._puerto.read_until().decode(errors="ignore")
         except serial.SerialTimeoutException:
             pass
         except Exception as error:
@@ -201,9 +217,15 @@ class EcoPhysicsNOx(Analyzer):
     COLUMNS = ("NO2", "NO", "NOx")
 
     def __init__(
-        self, name: str, address: int, port: str, publisher: callable, topic: str
+        self,
+        name: str,
+        address: int,
+        port: str,
+        publisher: callable,
+        topic: str,
+        simulated=False,
     ) -> None:
-        super().__init__(name, port, publisher, topic)
+        super().__init__(name, port, publisher, topic, simulated)
         self._address = address
 
         # self.transaccion("HR", "1")
@@ -214,7 +236,10 @@ class EcoPhysicsNOx(Analyzer):
 
     def _get_values(self) -> dict:
         resultado = {}
-        respuesta = self.transaccion("RD", "3")
+        if self._simulated:
+            respuesta = "123456,125689,123789"
+        else:
+            respuesta = self.transaccion("RD", "3")
         try:
             valores = respuesta.split(",")
             resultado = {

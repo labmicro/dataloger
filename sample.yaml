@@ -1,7 +1,10 @@
+name: lea
+latitude: -26.83421
+longitude: -65.204903
+
 mqtt:
-  server: test.mosquitto.org
+  server: raspberry.local
   port: 1883
-  id: laboratorio
   tls: false
   username:
   password:
