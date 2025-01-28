@@ -107,6 +107,11 @@ class Datalogger:
             protocol=mqtt.MQTTv311,
             clean_session=True,
         )
+        if self.config("mqtt.username", None):
+            self._client.username_pw_set(
+                username=self.config("mqtt.username", ""),
+                password=self.config("mqtt.password", ""),
+            )
         self._client.connect(
             host=self.config("mqtt.server", ""),
             port=self.config("mqtt.port", 1883),
