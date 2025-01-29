@@ -237,15 +237,15 @@ class EcoPhysicsNOx(Analyzer):
     def _get_values(self) -> dict:
         resultado = {}
         if self._simulated:
-            respuesta = "123456,125689,123789"
+            respuesta = " 0.012, 0.004, 0.017"
         else:
             respuesta = self.transaccion("RD", "3")
         try:
             valores = respuesta.split(",")
             resultado = {
-                "NO2": valores[0],
-                "NO": valores[1],
-                "NOx": valores[2],
+                "NO2": valores[0].strip(),
+                "NO": valores[1].strip(),
+                "NOx": valores[2].strip(),
             }
         except Exception as error:
             registro.error(f"No se pudo leer los datos del analizador, {str(error)}")

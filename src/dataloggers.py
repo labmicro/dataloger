@@ -27,6 +27,7 @@
 # SPDX-FileCopyrightText: 2023, Esteban Volentini <evolentini@herrera.unt.edu.ar>
 ##################################################################################################
 
+import re
 import yaml
 import json
 import getmac
@@ -177,6 +178,7 @@ class Datalogger:
 
     def publisher(self, topic: str, values: List[Dict]):
         for key, value in values.items():
+            value = float(re.sub("[^\d\.]", "", value))
             updated = False
             for entry in self._values:
                 if entry["parameter"] == key:
