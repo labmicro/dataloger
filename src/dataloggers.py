@@ -72,6 +72,7 @@ class Datalogger:
         self._mac = getmac.get_mac_address()
         self._last_heart_beat = datetime.now()
         self._updated = False
+        self._update_cycles = 0
         self._values = []
 
         self.configure_mqtt()
@@ -155,15 +156,16 @@ class Datalogger:
         registro.debug(f"Iniciando el cliente MQTT")
 
     def poll(self):
-        if (datetime.now() - self._last_heart_beat).total_seconds() > 60:
+        if (datetime.now() - self._last_heart_beat).total_seconds() > 10:
             self._last_heart_beat = datetime.now()
             topic = f"V0/NHI/{self._mac}"
             self._client.publish(topic=topic, payload=1)
+            self._update_cycles += 1
 
         for analyzer in self._analyzers:
             analyzer.poll()
 
-        if self._updated:
+        if self._updated and self._update_cycles >= 6:
             topic = f"V0/NDATA/{self._mac}"
             payload = {
                 "meta": {
@@ -175,6 +177,7 @@ class Datalogger:
             self._client.publish(topic=topic, payload=json.dumps(payload))
             self._values = []
             self._updated = False
+            self._update_cycles = 0
 
     def publisher(self, topic: str, values: List[Dict]):
         for key, value in values.items():
