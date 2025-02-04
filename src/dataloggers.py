@@ -155,7 +155,7 @@ class Datalogger:
         registro.debug(f"Iniciando el cliente MQTT")
 
     def poll(self):
-        if (datetime.now() - self._last_heart_beat).total_seconds() > 10:
+        if (datetime.now() - self._last_heart_beat).total_seconds() > 60:
             self._last_heart_beat = datetime.now()
             topic = f"V0/NHI/{self._mac}"
             self._client.publish(topic=topic, payload=1)
