@@ -73,7 +73,7 @@ class Datalogger:
         self._last_heart_beat = datetime.now()
         self._updated = False
         self._update_cycles = 0
-        self._values = []
+        self._values = {}
 
         self.configure_mqtt()
         self.condigure_logger()
@@ -132,16 +132,13 @@ class Datalogger:
         logger.addHandler(handler)
 
     def config(self, ruta: str, predeterminado: any) -> dict:
-        resultado = predeterminado
         dicccionario = self._config
         for clave in ruta.split("."):
-            if clave in ruta and type(dicccionario[clave]) == dict:
+            if isinstance(dicccionario, dict) and clave in dicccionario:
                 dicccionario = dicccionario[clave]
             else:
-                break
-        if clave in ruta and type(dicccionario[clave]):
-            resultado = dicccionario[clave]
-        return resultado
+                return predeterminado
+        return dicccionario
 
     def start(self):
         topic = f"V0/NBIRTH/{self._mac}"
@@ -172,22 +169,20 @@ class Datalogger:
                     "ts": int(datetime.now().timestamp()),
                     "mac": self._mac,
                 },
-                "data": self._values,
             }
+            payload.update(self._values)
             self._client.publish(topic=topic, payload=json.dumps(payload))
-            self._values = []
+            self._values = {}
             self._updated = False
             self._update_cycles = 0
 
     def publisher(self, topic: str, values: List[Dict]):
         for key, value in values.items():
-            value = float(re.sub("[^\d\.]", "", value))
-            updated = False
-            for entry in self._values:
-                if entry["parameter"] == key:
-                    entry["value"] = value
-                    updated = True
-                    break
-            if not updated:
-                self._values.append({"parameter": key, "value": value})
+            try:
+                numeric = re.sub(r"[^\d.\-]", "", str(value))
+                self._values[key] = float(numeric)
+            except (ValueError, TypeError) as error:
+                registro.warning(
+                    f"No se pudo convertir el valor '{value}' del parametro '{key}': {error}"
+                )
         self._updated = True
