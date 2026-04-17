@@ -41,6 +41,17 @@ NAK = b"\x15"
 registro = logging.getLogger(__name__)
 
 
+def _status_valido(campo: str) -> bool:
+    """Valida el código de estado en las tramas seriales de los analizadores
+    Environnement S.A. (O342M, AF22M). El campo suele llegar como "M000" y el
+    manual lo define como hex de 3 dígitos donde 00 es la única medición
+    válida; cualquier otro valor indica ciclo interno (cero 08, span 10),
+    calibración, mantenimiento o fallo, y no refleja aire ambiente real.
+    """
+    digitos = "".join(c for c in campo if c.isdigit() or c in "abcdefABCDEF")
+    return digitos[-2:].upper() == "00" if len(digitos) >= 2 else False
+
+
 class Analyzer:
     COLUMNS = None
 
@@ -173,13 +184,17 @@ class O341M(Analyzer):
 
         resultado = {}
         valores = respuesta.replace("\0", " ").split()
-        if len(valores) > 11:
+        if len(valores) > 11 and _status_valido(valores[2]):
             resultado = {
                 valores[3]: f"{valores[4]} {valores[5]}",
                 valores[6]: f"{valores[7]} {valores[8]}",
                 valores[9]: f"{valores[10]} {valores[11]}",
             }
             registro.info(f"Se recibieron los siguientes datos: {valores}")
+        elif len(valores) > 11:
+            registro.warning(
+                f"Lectura descartada de {self.name} por status {valores[2]}: {valores}"
+            )
 
         return resultado
 
@@ -204,11 +219,15 @@ class AF22M(Analyzer):
 
         resultado = {}
         valores = respuesta.replace("\0", " ").split()
-        if len(valores) > 5:
+        if len(valores) > 5 and _status_valido(valores[2]):
             resultado = {
                 valores[3]: f"{valores[4]} {valores[5]}",
             }
             registro.info(f"Se recibieron los siguientes datos: {valores}")
+        elif len(valores) > 5:
+            registro.warning(
+                f"Lectura descartada de {self.name} por status {valores[2]}: {valores}"
+            )
 
         return resultado
 
