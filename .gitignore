@@ -243,3 +243,5 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,macos,linux
 *.csv
 ftp/
+# Scratch de Claude Code (configs, backups locales)
+.claude/

@@ -29,6 +29,7 @@
 
 import os
 import shutil
+import socket
 import serial
 import logging
 from datetime import datetime
@@ -315,3 +316,191 @@ class EcoPhysicsNOx(Analyzer):
         else:
             resultado = resultado.to_bytes(1, "little")
         return resultado
+
+
+class GrimmEDM264(Analyzer):
+    """Espectrómetro de partículas GRIMM EDM 264 vía TCP.
+
+    Protocolo estándar (manual EDM 264 cap. 9.1): el equipo entrega cada
+    intervalo al menos dos líneas:
+      - P-line: fecha/hora, sensores de clima (Temp, rH, presión), GPS.
+      - N-line: 13 fracciones de masa en µg/m³ (TSP, PM10, PM4, PM2.5, PM1,
+        PMcoarse, inhalable, thoracic, respirable, pm10, pm2.5, pm1, TC).
+
+    Al abrir el socket enviamos ^E (0x05) para habilitar la salida de datos.
+    La clase mantiene el último P-line en caché para adjuntar los valores
+    de clima al próximo N-line (ambos se emiten en bloque cada intervalo).
+    """
+
+    COLUMNS = (
+        "TSP",
+        "PM10",
+        "PM4",
+        "PM25",
+        "PM1",
+        "PMcoarse",
+        "TC",
+        "GrimmTemp",
+        "GrimmRH",
+        "GrimmPres",
+    )
+
+    def __init__(
+        self,
+        name: str,
+        host: str,
+        port,
+        publisher: callable,
+        topic: str,
+        simulated=False,
+    ) -> None:
+        self._name = name
+        self._host = host
+        self._tcp_port = int(port)
+        self._publisher = publisher
+        self._topic = topic
+        self._simulated = simulated
+        self._socket = None
+        self._rx_buffer = b""
+        self._last_p = {}
+        self.dir = ""
+        self._last_data = None
+        self.filter_data = 0
+        self.respuesta = ""
+
+    def _ensure_connection(self):
+        if self._socket is not None:
+            return
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(5)
+            s.connect((self._host, self._tcp_port))
+            s.sendall(b"\x05")
+            self._socket = s
+            self._rx_buffer = b""
+            registro.info(
+                f"Grimm {self._name}: conectado a {self._host}:{self._tcp_port}"
+            )
+        except Exception as error:
+            registro.error(
+                f"Grimm {self._name}: no se pudo conectar a {self._host}:{self._tcp_port}, {error}"
+            )
+            self._socket = None
+
+    def _drop_connection(self):
+        if self._socket is not None:
+            try:
+                self._socket.close()
+            except Exception:
+                pass
+        self._socket = None
+        self._rx_buffer = b""
+
+    def _read_available_lines(self):
+        if self._simulated:
+            return [
+                "P   26    4   22   13   55   1    1  100    0   NA   34   17.7   83.5     NA  967.8     NA     NA   0   84659.1  1511418.4   42.2   28.6  -26.8344  -65.2044    514   99.4A    NA      NA      NA",
+                "N_     17.2      9.2      5.6      4.7      4.0      4.6     14.8     12.2      7.1     11.7      5.3      4.3    53459",
+            ]
+
+        self._ensure_connection()
+        if self._socket is None:
+            return []
+
+        lines = []
+        try:
+            self._socket.settimeout(0.3)
+            while True:
+                chunk = self._socket.recv(4096)
+                if not chunk:
+                    registro.warning(
+                        f"Grimm {self._name}: el equipo cerró el socket"
+                    )
+                    self._drop_connection()
+                    break
+                self._rx_buffer += chunk
+        except socket.timeout:
+            pass
+        except Exception as error:
+            registro.warning(f"Grimm {self._name}: error leyendo socket, {error}")
+            self._drop_connection()
+
+        while b"\r\n" in self._rx_buffer:
+            raw, self._rx_buffer = self._rx_buffer.split(b"\r\n", 1)
+            decoded = raw.decode("ascii", errors="ignore").strip()
+            if decoded:
+                lines.append(decoded)
+        return lines
+
+    @staticmethod
+    def _f(text):
+        if text is None:
+            return None
+        if text.upper() == "NA":
+            return None
+        try:
+            return float(text.rstrip("Aam"))
+        except ValueError:
+            return None
+
+    def _parse_n_line(self, parts):
+        if len(parts) < 14:
+            return None
+        v = parts[1:14]
+        return {
+            "TSP": self._f(v[0]),
+            "PM10": self._f(v[1]),
+            "PM4": self._f(v[2]),
+            "PM25": self._f(v[3]),
+            "PM1": self._f(v[4]),
+            "PMcoarse": self._f(v[5]),
+            "TC": self._f(v[12]),
+        }
+
+    def _parse_p_line(self, parts):
+        if len(parts) < 16:
+            return None
+        p = parts[1:]
+        return {
+            "GrimmTemp": self._f(p[11]) if len(p) > 11 else None,
+            "GrimmRH": self._f(p[12]) if len(p) > 12 else None,
+            "GrimmPres": self._f(p[14]) if len(p) > 14 else None,
+        }
+
+    def _get_values(self) -> dict:
+        lines = self._read_available_lines()
+        n_data = None
+
+        for line in lines:
+            parts = line.split()
+            if not parts:
+                continue
+            ident = parts[0]
+            if ident == "P":
+                p = self._parse_p_line(parts)
+                if p:
+                    self._last_p = {k: v for k, v in p.items() if v is not None}
+                    registro.debug(
+                        f"Grimm {self._name}: P-line clima {self._last_p}"
+                    )
+            elif len(ident) <= 2 and ident.startswith("N"):
+                parsed = self._parse_n_line(parts)
+                if parsed:
+                    n_data = {k: v for k, v in parsed.items() if v is not None}
+                    registro.info(
+                        f"Grimm {self._name}: N-line masas {n_data}"
+                    )
+
+        if not n_data:
+            return {}
+
+        resultado = dict(n_data)
+        for k, v in self._last_p.items():
+            resultado.setdefault(k, v)
+        return resultado
+
+    def _serialize_values(self, values) -> str:
+        result = datetime.strftime(datetime.now(), '"%Y-%m-%d","%H:%M:%S"')
+        for column in self.COLUMNS:
+            result = result + f',"{values.get(column, "NA")}"'
+        return result

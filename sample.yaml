@@ -29,3 +29,8 @@ anayzers:
     class: AF22M
     port: /dev/tty.USB3
     topic: lea/azufre
+  - name: MaterialParticulado
+    class: GrimmEDM264
+    host: 192.168.100.204
+    port: 4711
+    topic: lea/pm
