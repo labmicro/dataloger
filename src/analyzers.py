@@ -32,7 +32,10 @@ import shutil
 import socket
 import serial
 import logging
+import threading
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse, parse_qs
 
 STX = b"\x02"
 ETX = b"\x03"
@@ -498,6 +501,206 @@ class GrimmEDM264(Analyzer):
         for k, v in self._last_p.items():
             resultado.setdefault(k, v)
         return resultado
+
+    def _serialize_values(self, values) -> str:
+        result = datetime.strftime(datetime.now(), '"%Y-%m-%d","%H:%M:%S"')
+        for column in self.COLUMNS:
+            result = result + f',"{values.get(column, "NA")}"'
+        return result
+
+
+class WeatherUnderground(Analyzer):
+    """Estación meteorológica que envía datos por HTTP en formato Wunderground.
+
+    Funciona con cualquier estación que soporte el protocolo PWS de Weather
+    Underground (Ecowitt WH2900, Ambient Weather, etc.) configurada en modo
+    "Customized Website". El equipo manda peticiones HTTP GET a
+    /weatherstation/updateweatherstation.php?ID=...&PASSWORD=...&...&action=updateraw
+
+    Esta clase levanta un servidor HTTP en un hilo en segundo plano que
+    captura cada update, lo convierte a unidades métricas y lo deja en un
+    estado interno para que la próxima invocación de poll() lo publique al
+    MQTT como cualquier otro analyzer. Si no llega un update entre dos polls
+    consecutivos, _get_values devuelve {} y no se publica nada.
+
+    Conversiones aplicadas:
+      tempf, indoortempf, dewptf  →  °C
+      windspeedmph, windgustmph    →  m/s
+      baromin                       →  mbar
+      rainin, dailyrainin           →  mm
+    """
+
+    COLUMNS = (
+        "MeteoTempOut",
+        "MeteoRHOut",
+        "MeteoDewPoint",
+        "MeteoPressure",
+        "MeteoWindSpeed",
+        "MeteoWindGust",
+        "MeteoWindDir",
+        "MeteoRainHour",
+        "MeteoRainDay",
+        "MeteoSolarRad",
+        "MeteoUV",
+        "MeteoTempIn",
+        "MeteoRHIn",
+    )
+
+    def __init__(
+        self,
+        name: str,
+        port,
+        publisher: callable,
+        topic: str,
+        station_id: str = None,
+        password: str = None,
+        bind: str = "0.0.0.0",
+        simulated=False,
+    ) -> None:
+        self._name = name
+        self._http_port = int(port)
+        self._publisher = publisher
+        self._topic = topic
+        self._simulated = simulated
+        self._station_id = station_id
+        self._password = password
+        self._bind = bind
+        self._lock = threading.Lock()
+        self._latest = None
+        self._server = None
+        self.dir = ""
+        self._last_data = None
+        self.filter_data = 0
+        self.respuesta = ""
+
+        if not self._simulated:
+            self._start_server()
+
+    def _start_server(self):
+        try:
+            handler_cls = self._make_handler()
+            self._server = HTTPServer((self._bind, self._http_port), handler_cls)
+            thread = threading.Thread(
+                target=self._server.serve_forever,
+                name=f"WU-{self._name}",
+                daemon=True,
+            )
+            thread.start()
+            registro.info(
+                f"WU {self._name}: escuchando HTTP en {self._bind}:{self._http_port}"
+            )
+        except Exception as error:
+            registro.error(
+                f"WU {self._name}: no se pudo iniciar HTTP en "
+                f"{self._bind}:{self._http_port}, {error}"
+            )
+            self._server = None
+
+    def _make_handler(self):
+        outer = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                outer._handle_get(handler)
+
+            def log_message(handler, fmt, *args):
+                # silencio el access log default; loggea registro.debug si querés
+                return
+
+        return _Handler
+
+    def _handle_get(self, handler):
+        try:
+            parsed = urlparse(handler.path)
+            params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
+            if self._station_id and params.get("ID") != self._station_id:
+                handler.send_response(401)
+                handler.end_headers()
+                handler.wfile.write(b"bad station id\n")
+                return
+
+            if self._password and params.get("PASSWORD") != self._password:
+                handler.send_response(401)
+                handler.end_headers()
+                handler.wfile.write(b"bad password\n")
+                return
+
+            valores = self._convertir(params)
+
+            if valores:
+                with self._lock:
+                    if self._latest is None:
+                        self._latest = {}
+                    self._latest.update(valores)
+                registro.info(
+                    f"WU {self._name}: update recibido {valores}"
+                )
+            else:
+                registro.warning(
+                    f"WU {self._name}: GET sin campos parseables, params={params}"
+                )
+
+            handler.send_response(200)
+            handler.send_header("Content-Type", "text/plain")
+            handler.end_headers()
+            handler.wfile.write(b"success\n")
+        except Exception as error:
+            registro.warning(f"WU {self._name}: error procesando GET, {error}")
+            try:
+                handler.send_response(500)
+                handler.end_headers()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _f_to_c(f):
+        return (float(f) - 32.0) * 5.0 / 9.0
+
+    @staticmethod
+    def _mph_to_ms(mph):
+        return float(mph) * 0.44704
+
+    @staticmethod
+    def _inhg_to_mbar(inhg):
+        return float(inhg) * 33.8639
+
+    @staticmethod
+    def _in_to_mm(inches):
+        return float(inches) * 25.4
+
+    def _convertir(self, params):
+        resultado = {}
+
+        def grabar(field, src_key, fn=float):
+            v = params.get(src_key)
+            if v is None or v == "" or v.lower() == "nan":
+                return
+            try:
+                resultado[field] = round(fn(v), 3)
+            except (ValueError, TypeError):
+                pass
+
+        grabar("MeteoTempOut", "tempf", self._f_to_c)
+        grabar("MeteoTempIn", "indoortempf", self._f_to_c)
+        grabar("MeteoRHOut", "humidity")
+        grabar("MeteoRHIn", "indoorhumidity")
+        grabar("MeteoDewPoint", "dewptf", self._f_to_c)
+        grabar("MeteoPressure", "baromin", self._inhg_to_mbar)
+        grabar("MeteoWindSpeed", "windspeedmph", self._mph_to_ms)
+        grabar("MeteoWindGust", "windgustmph", self._mph_to_ms)
+        grabar("MeteoWindDir", "winddir")
+        grabar("MeteoRainHour", "rainin", self._in_to_mm)
+        grabar("MeteoRainDay", "dailyrainin", self._in_to_mm)
+        grabar("MeteoSolarRad", "solarradiation")
+        grabar("MeteoUV", "UV")
+        return resultado
+
+    def _get_values(self) -> dict:
+        with self._lock:
+            data = self._latest
+            self._latest = None
+        return data or {}
 
     def _serialize_values(self, values) -> str:
         result = datetime.strftime(datetime.now(), '"%Y-%m-%d","%H:%M:%S"')
