@@ -534,12 +534,15 @@ class WeatherUnderground(Analyzer):
         "MeteoTempOut",
         "MeteoRHOut",
         "MeteoDewPoint",
+        "MeteoWindChill",
         "MeteoPressure",
         "MeteoWindSpeed",
         "MeteoWindGust",
         "MeteoWindDir",
         "MeteoRainHour",
         "MeteoRainDay",
+        "MeteoRainWeek",
+        "MeteoRainMonth",
         "MeteoSolarRad",
         "MeteoUV",
         "MeteoTempIn",
@@ -611,16 +614,49 @@ class WeatherUnderground(Analyzer):
 
     def _handle_get(self, handler):
         try:
-            parsed = urlparse(handler.path)
+            raw_path = handler.path
+            # Workaround: el firmware EasyWeather V1.7.2 del WH2900 concatena
+            # los parámetros del query string directamente al path sin el "?"
+            # separador (ej. "/path.phpID=...&tempf=..."). Si detectamos esa
+            # forma, insertamos el "?" en el primer campo conocido para que
+            # urlparse pueda extraer correctamente la query.
+            if "?" not in raw_path:
+                for marker in (
+                    "ID=",
+                    "PASSWORD=",
+                    "tempf=",
+                    "indoortempf=",
+                    "humidity=",
+                    "action=",
+                    "dateutc=",
+                ):
+                    idx = raw_path.find(marker)
+                    if idx > 0:
+                        raw_path = raw_path[:idx] + "?" + raw_path[idx:]
+                        break
+
+            parsed = urlparse(raw_path)
             params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+            client_ip = handler.client_address[0]
+            registro.info(
+                f"WU {self._name}: GET de {client_ip} path={parsed.path} "
+                f"campos={list(params.keys())}"
+            )
 
             if self._station_id and params.get("ID") != self._station_id:
+                registro.warning(
+                    f"WU {self._name}: rechazado por ID inválido "
+                    f"(recibido={params.get('ID')!r}, esperado={self._station_id!r})"
+                )
                 handler.send_response(401)
                 handler.end_headers()
                 handler.wfile.write(b"bad station id\n")
                 return
 
             if self._password and params.get("PASSWORD") != self._password:
+                registro.warning(
+                    f"WU {self._name}: rechazado por PASSWORD inválido"
+                )
                 handler.send_response(401)
                 handler.end_headers()
                 handler.wfile.write(b"bad password\n")
@@ -686,12 +722,21 @@ class WeatherUnderground(Analyzer):
         grabar("MeteoRHOut", "humidity")
         grabar("MeteoRHIn", "indoorhumidity")
         grabar("MeteoDewPoint", "dewptf", self._f_to_c)
-        grabar("MeteoPressure", "baromin", self._inhg_to_mbar)
+        grabar("MeteoWindChill", "windchillf", self._f_to_c)
+        # Presión: se prefiere absbaromin (presión absoluta de estación) sobre
+        # baromin (que viene corregida al nivel del mar). La absoluta es la que
+        # corresponde comparar con la del Grimm (GrimmPres).
+        if "absbaromin" in params:
+            grabar("MeteoPressure", "absbaromin", self._inhg_to_mbar)
+        else:
+            grabar("MeteoPressure", "baromin", self._inhg_to_mbar)
         grabar("MeteoWindSpeed", "windspeedmph", self._mph_to_ms)
         grabar("MeteoWindGust", "windgustmph", self._mph_to_ms)
         grabar("MeteoWindDir", "winddir")
         grabar("MeteoRainHour", "rainin", self._in_to_mm)
         grabar("MeteoRainDay", "dailyrainin", self._in_to_mm)
+        grabar("MeteoRainWeek", "weeklyrainin", self._in_to_mm)
+        grabar("MeteoRainMonth", "monthlyrainin", self._in_to_mm)
         grabar("MeteoSolarRad", "solarradiation")
         grabar("MeteoUV", "UV")
         return resultado
