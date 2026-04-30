@@ -167,24 +167,57 @@ class Analyzer:
 
         return values
 
+    def _read_serial_latest_line(self) -> str:
+        """Lee del puerto serie y devuelve únicamente la ÚLTIMA trama completa.
+
+        Algunos instrumentos (O342M, AF22M en modo "print") transmiten cada
+        pocos segundos, mientras que el datalogger pollea cada 30 s. Eso hace
+        que el buffer del kernel acumule tramas viejas y read_until() devuelva
+        la primera (la más antigua), produciendo lecturas con varios segundos
+        o minutos de retraso. Cuando se apaga el equipo, ese backlog sigue
+        drenando durante minutos como si fueran datos frescos.
+
+        Esta función drena todo lo que esté en el buffer en cada poll,
+        descarta las líneas viejas y devuelve solo la más reciente, completa.
+        Si no hay líneas completas (equipo silencioso o trama parcial),
+        devuelve cadena vacía.
+        """
+        if not self._puerto:
+            return ""
+        try:
+            primera = self._puerto.read_until()
+            rezago = b""
+            while self._puerto.in_waiting:
+                chunk = self._puerto.read(self._puerto.in_waiting)
+                if not chunk:
+                    break
+                rezago += chunk
+            if rezago:
+                registro.debug(
+                    f"{self.name}: drenando {len(rezago)} bytes adicionales del buffer"
+                )
+            todo = (primera + rezago).decode(errors="ignore")
+            partes_completas = todo.split("\n")[:-1]
+            lineas = [linea.strip() for linea in partes_completas if linea.strip()]
+            return lineas[-1] if lineas else ""
+        except serial.SerialTimeoutException:
+            return ""
+        except Exception as error:
+            registro.error(
+                f"No se pudo leer desde el puerto {self._puerto.port}, error {error}"
+            )
+            return ""
+
 
 class O341M(Analyzer):
     COLUMNS = ("O3", "EXT1", "EXT2")
 
     def _get_values(self) -> dict:
         registro.debug(f"Leyendo el puerto serial del analizador {self.name}")
-        respuesta = ""
-        try:
-            if self._simulated:
-                respuesta = "14-00-01 23:06  M000  O3   17.7  PPB   EXT1   1.0   mv   EXT2   0.0   mv   \x0D\x0A"
-            else:
-                respuesta = self._puerto.read_until().decode(errors="ignore")
-        except serial.SerialTimeoutException:
-            pass
-        except Exception as error:
-            registro.error(
-                f"No se pudo leer desde el puerto {self._puerto.port}, error {str(error)}"
-            )
+        if self._simulated:
+            respuesta = "14-00-01 23:06  M000  O3   17.7  PPB   EXT1   1.0   mv   EXT2   0.0   mv"
+        else:
+            respuesta = self._read_serial_latest_line()
 
         resultado = {}
         valores = respuesta.replace("\0", " ").split()
@@ -208,18 +241,10 @@ class AF22M(Analyzer):
 
     def _get_values(self) -> dict:
         registro.debug(f"Leyendo el puerto serial del analizador {self.name}")
-        respuesta = ""
-        try:
-            if self._simulated:
-                respuesta = "07-09-23 16:41  M000 SO2       3.510 PPB  \x0D\x0A"
-            else:
-                respuesta = self._puerto.read_until().decode(errors="ignore")
-        except serial.SerialTimeoutException:
-            pass
-        except Exception as error:
-            registro.error(
-                f"No se pudo leer desde el puerto {self._puerto.port}, error {str(error)}"
-            )
+        if self._simulated:
+            respuesta = "07-09-23 16:41  M000 SO2       3.510 PPB"
+        else:
+            respuesta = self._read_serial_latest_line()
 
         resultado = {}
         valores = respuesta.replace("\0", " ").split()
