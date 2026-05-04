@@ -31,6 +31,7 @@ import os
 import shutil
 import socket
 import serial
+import time
 import logging
 import threading
 from datetime import datetime
@@ -391,6 +392,8 @@ class GrimmEDM264(Analyzer):
         self._socket = None
         self._rx_buffer = b""
         self._last_p = {}
+        self._last_rx_at = 0.0
+        self._stale_after = 120.0
         self.dir = ""
         self._last_data = None
         self.filter_data = 0
@@ -403,9 +406,20 @@ class GrimmEDM264(Analyzer):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(5)
             s.connect((self._host, self._tcp_port))
+            # Keepalive: detectar conexiones zombie cuando el Grimm se reinicia
+            # sin cerrar la sesión TCP. Sin esto, recv() solo timeoutea y nunca
+            # se reconecta — los datos no vuelven hasta reiniciar el daemon.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            try:
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+            except (AttributeError, OSError):
+                pass
             s.sendall(b"\x05")
             self._socket = s
             self._rx_buffer = b""
+            self._last_rx_at = time.monotonic()
             registro.info(
                 f"Grimm {self._name}: conectado a {self._host}:{self._tcp_port}"
             )
@@ -435,6 +449,16 @@ class GrimmEDM264(Analyzer):
         if self._socket is None:
             return []
 
+        # Watchdog: si pasaron _stale_after segundos sin un solo byte del Grimm
+        # consideramos la sesión zombie y forzamos reconexión, lo que reenvía
+        # el ^E al equipo recién reiniciado para volver a habilitar la salida.
+        if time.monotonic() - self._last_rx_at > self._stale_after:
+            registro.warning(
+                f"Grimm {self._name}: {self._stale_after:.0f}s sin datos, reconectando"
+            )
+            self._drop_connection()
+            return []
+
         lines = []
         try:
             self._socket.settimeout(0.3)
@@ -447,6 +471,7 @@ class GrimmEDM264(Analyzer):
                     self._drop_connection()
                     break
                 self._rx_buffer += chunk
+                self._last_rx_at = time.monotonic()
         except socket.timeout:
             pass
         except Exception as error:
