@@ -249,16 +249,26 @@ class AF22M(Analyzer):
 
         resultado = {}
         valores = respuesta.replace("\0", " ").split()
-        if len(valores) > 5 and _status_valido(valores[2]):
-            resultado = {
-                valores[3]: f"{valores[4]} {valores[5]}",
-            }
-            registro.info(f"Se recibieron los siguientes datos: {valores}")
-        elif len(valores) > 5:
+        if not valores:
+            registro.debug(
+                f"{self.name}: sin datos en el puerto serial (equipo silencioso o desconectado)"
+            )
+            return resultado
+        if len(valores) <= 5:
+            registro.warning(
+                f"{self.name}: trama corta ({len(valores)} campos): {valores}"
+            )
+            return resultado
+        if not _status_valido(valores[2]):
             registro.warning(
                 f"Lectura descartada de {self.name} por status {valores[2]}: {valores}"
             )
+            return resultado
 
+        resultado = {
+            valores[3]: f"{valores[4]} {valores[5]}",
+        }
+        registro.info(f"Se recibieron los siguientes datos: {valores}")
         return resultado
 
 
@@ -289,16 +299,25 @@ class EcoPhysicsNOx(Analyzer):
             respuesta = " 0.012, 0.004, 0.017"
         else:
             respuesta = self.transaccion("RD", "3")
-        try:
-            valores = respuesta.split(",")
-            resultado = {
-                "NO2": valores[0].strip(),
-                "NO": valores[1].strip(),
-                "NOx": valores[2].strip(),
-            }
-        except Exception as error:
-            registro.error(f"No se pudo leer los datos del analizador, {str(error)}")
 
+        if not respuesta:
+            registro.debug(
+                f"{self.name}: sin respuesta del equipo (timeout o BCC invalido)"
+            )
+            return resultado
+
+        valores = [v.strip() for v in respuesta.split(",")]
+        if len(valores) < 3:
+            registro.warning(
+                f"{self.name}: respuesta con {len(valores)} campos, esperaba >=3: {respuesta!r}"
+            )
+            return resultado
+
+        resultado = {
+            "NO2": valores[0],
+            "NO": valores[1],
+            "NOx": valores[2],
+        }
         return resultado
 
     def transaccion(self, comando, argumento):
