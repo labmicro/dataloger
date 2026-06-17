@@ -35,7 +35,7 @@ import time
 import logging
 import threading
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 STX = b"\x02"
@@ -651,7 +651,14 @@ class WeatherUnderground(Analyzer):
     def _start_server(self):
         try:
             handler_cls = self._make_handler()
-            self._server = HTTPServer((self._bind, self._http_port), handler_cls)
+            # ThreadingHTTPServer: cada request se atiende en su propio hilo, así
+            # un cliente lento o con una conexión a medio cerrar (típico del
+            # firmware EasyWeather del WH2900) no bloquea el accept() del resto.
+            # daemon_threads evita que esos hilos impidan cerrar el proceso.
+            self._server = ThreadingHTTPServer(
+                (self._bind, self._http_port), handler_cls
+            )
+            self._server.daemon_threads = True
             thread = threading.Thread(
                 target=self._server.serve_forever,
                 name=f"WU-{self._name}",
@@ -672,6 +679,10 @@ class WeatherUnderground(Analyzer):
         outer = self
 
         class _Handler(BaseHTTPRequestHandler):
+            # Corta lecturas/escrituras que se queden colgadas en un cliente
+            # que abrió la conexión pero no la completa, liberando el hilo.
+            timeout = 15
+
             def do_GET(handler):
                 outer._handle_get(handler)
 
